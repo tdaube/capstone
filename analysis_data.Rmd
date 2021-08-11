@@ -1,0 +1,490 @@
+---
+title: "Data Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library("tidyverse")
+library("tidytext")
+library("sentimentr")
+library("stm")
+
+# Read in and bind timelines
+leaver_timelines <- rbindlist(lapply(list.files(pattern = "^leaver_.*\\.csv$"), fread))
+remainer_timelines <- rbindlist(lapply(list.files(pattern = "^remainer_.*\\.csv$"), fread))
+
+# Filter out users that tweeted less than 5 times to look for active users
+leaver_timelines_filtered <- leaver_timelines %>% 
+  group_by(name) %>%
+  filter(!n() <= 5) %>%
+  ungroup()
+
+remainer_timelines_filtered <- remainer_timelines %>% 
+  group_by(name) %>%
+  filter(!n() <= 5) %>%
+  ungroup()
+
+# Unique number of users in each set
+length(as.vector(unique(leaver_tl$username)))
+length(as.vector(unique(remainer_tl$username)))
+```
+
+Plot volume of tweets over time.
+
+```{r}
+# Change date format 
+leaver_tl_vol <- leaver_tl %>%
+  mutate(created_at.x = as.Date(created_at.x, format = "%d.%m.%Y"))
+remain_tl_vol <- remainer_tl %>%
+  mutate(created_at.x = as.Date(created_at.x, format = "%d.%m.%Y"))
+
+# Pipe results into combined dataframe
+vol_data <- leaver_tl_vol %>%  
+  mutate(Stance = 'Leaver') %>%
+  bind_rows(remain_tl_vol %>%
+              mutate(Stance = 'Remainer'))
+
+# Plot
+ggplot(vol_data, aes(x=created_at.x, col=Stance)) + 
+  geom_freqpoly(bins = 100, size = 0.4) +
+  theme_light() +
+  ggtitle("Tweet Volume for Remainers and Leavers") +
+  labs(x = "Year", y = "Number of Tweets") +
+  scale_color_manual(values = c("#923130", "#0077dc")) 
+```
+
+Pre-process and summary statistics for sentimentr.
+
+```{r}
+# Remove and links and amp
+remainer_tl$text <- tolower(gsub("https\\S*", "", remainer_tl$text))
+remainer_tl$text <- gsub("amp", "", remainer_tl$text)
+leaver_tl$text <- tolower(gsub("https\\S*", "", leaver_tl$text))
+leaver_tl$text <- gsub("amp", "", leaver_tl$text)
+
+# Tokenisation
+sentences_remain <- get_sentences(remainer_tl$text)
+# Run sentiment dictionary
+sentimentr_remain <- sentiment_by(sentences_remain)
+
+# Bind to dataframe of timelines & rename col
+remain_sent <- cbind(remainer_tl, sentimentr_remain$ave_sentiment)
+colnames(remain_sent)[13] <- "ave_sent"
+# Summarise by date
+remain_sent_date <- remain_sent %>%
+  mutate(date = as.Date(created_at.x, format = "%d.%m.%Y")) %>%
+  group_by(date) %>%
+  summarise(sentiment = sum(ave_sent))
+
+# Create dataframe
+freq_remain_sent <- data.frame(list(
+    Year = (remain_sent_date$date),
+    Frequency = remain_sent_date))
+
+# Make variable for smoothed sentiment
+dat_sm_remain <- data.frame(ksmooth(x = remain_sent_date$date, 
+                      y = remain_sent_date$sentiment,
+                      kernel = "normal", bandwidth = 25))
+
+# Plot with smoothed sentiment
+ggplot(dat_sm_remain, aes(x, y)) + 
+  geom_line() +
+  theme_light() +
+  ggtitle("Daily Tweet Sentiment for Remainers") +
+  labs(x = "Year", y = "Sentiment of Tweets") +
+  geom_vline(xintercept = as.numeric(as.Date("2016-06-23")), linetype=4) +
+  scale_color_manual(values = c("#923130", "#0077dc"))
+
+# Redo pre-processing with tidytext
+sentences_leave <- get_sentences(leaver_tl$text)
+# Run sentiment dictionary
+sentimentr_leave <- sentiment_by(sentences_leave)
+
+# Bind to dataframe of timelines & rename col
+leave_sent <- cbind(leaver_tl, sentimentr_leave$ave_sentiment)
+colnames(leave_sent)[13] <- "ave_sent"
+
+# Summarise by date
+leave_sent_date <- leave_sent %>%
+  mutate(date = as.Date(created_at.x, format = "%d.%m.%Y")) %>%
+  group_by(date) %>%
+  summarise(sentiment = sum(ave_sent))
+
+# Create dataframe
+freq_leave_sent <- data.frame(list(
+    Year = (leave_sent_date$date),
+    Frequency = leave_sent_date))
+
+# Create smoothed dataframe
+dat_sm_leave <- data.frame(ksmooth(x = leave_sent_date$date, 
+                      y = leave_sent_date$sentiment,
+                      kernel = "normal", bandwidth = 25))
+
+# Plot smoothed dataframe
+ggplot(dat_sm_leave, aes(x, y)) + 
+  geom_line() +
+  theme_light() +
+  ggtitle("Daily Tweet Sentiment for Leavers") +
+  labs(x = "Year", y = "Sentiment of Tweets") +
+  geom_vline(xintercept = as.numeric(as.Date("2016-06-23")), linetype=4) +
+  scale_color_manual(values = c("#923130", "#0077dc"))
+
+# Pipe results into combined dataframe
+sentr_data <- dat_sm_remain %>%  
+  mutate(Stance = 'Remainer') %>%
+  bind_rows(dat_sm_leave %>%
+              mutate(Stance = 'Leaver'))
+
+# Plot
+ggplot(sentr_data, aes(x, y, col = Stance)) + 
+  geom_line(size = 0.2) +
+  theme_light() +
+  ggtitle("Daily Tweet Sentiment for Remainers and Leavers") +
+  labs(x = "Year", y = "Sentiment") +
+  scale_color_manual(values = c("#923130", "#0077dc")) +
+  geom_vline(xintercept = as.numeric(as.Date("2016-06-23")), linetype=9, size = 0.7) +
+  geom_vline(xintercept = as.numeric(as.Date("2017-06-09")), linetype=9, size = 0.7) +
+  geom_vline(xintercept = as.numeric(as.Date("2019-03-20")), linetype=9, size = 0.7) +
+  geom_vline(xintercept = as.numeric(as.Date("2019-09-11")), linetype=9, size = 0.7) +
+  geom_vline(xintercept = as.numeric(as.Date("2020-12-31")), linetype=9, size = 0.7) +
+  geom_text(aes(x = as.Date("2016-06-23"), y = -15, label = "EU Referendum"), 
+            color = "black", angle = 90, size = 3, nudge_x = 40) +
+  geom_text(aes(x = as.Date("2017-06-09"), y = -14.5, label = "General Election"), 
+            color = "black", angle = 90, size = 3, nudge_x = 40) +
+  geom_text(aes(x = as.Date("2019-03-20"), y = 1, label = "Article 50 Extension"), 
+            color = "black", angle = 90, size = 3, nudge_x = 40) +
+  geom_text(aes(x = as.Date("2019-09-111"), y = 1, label = "Document Published"), 
+            color = "black", angle = 90, size = 3, nudge_x = 40) +
+  geom_text(aes(x = as.Date("2020-12-31"), y = -13.5, label = "End of Transition Period"), 
+            color = "black", angle = 90, size = 3, nudge_x = 40)
+```
+
+Plot the number of positive and negative tweets per year for Remainer and Leaver.
+
+```{r}
+# Create binary variable for plotting remain
+remain_sent <- remain_sent %>% 
+  mutate(pos_neg = if_else(ave_sent == 0, 0, 
+                           if_else(ave_sent > 0, 1, -1)))
+# Summarise by date
+remain_year <- remain_sent %>%
+  mutate(date = as.Date(created_at.x, format = "%d.%m.%Y"))
+remain_year$year <- format(remain_year$date, format = "%Y")
+remain_year <- remain_year %>%
+  group_by(year)
+
+# Subset df by year
+rem_16 <- group_by(count(remain_year[remain_year$year == 2016,], pos_neg), year)
+rem_17 <- group_by(count(remain_year[remain_year$year == 2017,], pos_neg), year)
+rem_18 <- group_by(count(remain_year[remain_year$year == 2018,], pos_neg), year)
+rem_19 <- group_by(count(remain_year[remain_year$year == 2019,], pos_neg), year)
+rem_20 <- group_by(count(remain_year[remain_year$year == 2020,], pos_neg), year)
+rem_21 <- group_by(count(remain_year[remain_year$year == 2021,], pos_neg), year)
+rem <- rbind(rem_16, rem_17, rem_18, rem_19, rem_20)
+
+### Create binary variable for plotting leavers
+leave_sent <- leave_sent %>% 
+  mutate(pos_neg = if_else(ave_sent == 0, 0, 
+                           if_else(ave_sent > 0, 1, -1)))
+
+# Summarise by date
+leave_year <- leave_sent %>%
+  mutate(date = as.Date(created_at.x, format = "%d.%m.%Y"))
+leave_year$year <- format(leave_year$date, format = "%Y")
+leave_year <- leave_year %>%
+  group_by(year)
+
+# Subset df by year
+lev_16 <- group_by(count(leave_year[leave_year$year == 2016,], pos_neg), year)
+lev_17 <- group_by(count(leave_year[leave_year$year == 2017,], pos_neg), year)
+lev_18 <- group_by(count(leave_year[leave_year$year == 2018,], pos_neg), year)
+lev_19 <- group_by(count(leave_year[leave_year$year == 2019,], pos_neg), year)
+lev_20 <- group_by(count(leave_year[leave_year$year == 2020,], pos_neg), year)
+lev_21 <- group_by(count(leave_year[leave_year$year == 2021,], pos_neg), year)
+lev <- rbind(lev_16, lev_17, lev_18, lev_19, lev_20)
+
+ggplot(rem, aes(x=year, y=n, fill=as.factor(pos_neg))) + 
+  geom_bar(stat='identity') +
+  theme_light() +
+  ggtitle("Number of pos/neg/neutral for Remainers") + 
+  guides(fill=guide_legend(title="Sentiment")) +
+  labs(x = "Year", y = "Number of Tweets") +
+  scale_fill_manual(values = c("#cb584d", "#7878cd", "#70a845"), 
+                    labels = c("Negative", "Neutral", "Positive"))
+  
+ggplot(lev, aes(x=year, y=n, fill=as.factor(pos_neg))) + 
+  geom_bar(stat='identity') +
+  theme_light() +
+  ggtitle("Number of pos/neg/neutral for Leavers") +
+  labs(x = "Year", y = "Number of Tweets") +
+  guides(fill=guide_legend(title="Sentiment")) +
+  scale_fill_manual(values = c("#cb584d", "#7878cd", "#70a845"), 
+                    labels = c("Negative", "Neutral", "Positive"))
+```
+
+Sentiment analysis with NRC.
+
+Sentiment analysis using NRC. 
+
+```{r}
+# Make corpuses
+corpus_leave <- corpus(leaver_tl)
+corpus_remain <- corpus(remainer_tl)
+
+# Reformat into days without the times
+corpus_leave$date <- as.Date(corpus_leave$created_at.x)
+corpus_leave$month <- format(corpus_leave$created_at.x, format = "%Y-%m")
+corpus_leave$year <- format(corpus_leave$created_at.x, format = "%Y")
+
+corpus_remain$date <- as.Date(corpus_remain$created_at.x)
+corpus_remain$month <- format(corpus_remain$created_at.x, format = "%Y-%m")
+corpus_remain$year <- format(corpus_remain$created_at.x, format = "%Y")
+
+# Pre-process and apply dictionary
+leave_dict <- corpus_leave %>%
+  tokens(remove_punct = TRUE, remove_symbols = TRUE, 
+         remove_numbers = TRUE, remove_url = TRUE) %>%
+  tokens_remove(stopwords("en"), padding = TRUE) %>%
+  tokens_ngrams(n = 1:2) %>%
+  dfm() %>%
+  dfm_tfidf() %>%
+  dfm_trim(min_termfreq = 5) %>%
+  dfm_lookup(dictionary = data_dictionary_NRC)
+
+# Group DFM by day and create dataframe
+leave_dfm_day <- leave_dict %>%
+  dfm_group(date, force = TRUE)
+freq_leave <- data.frame(list(
+    Year = (leave_dfm_day$date),
+    Frequency = leave_dfm_day))
+
+# Group DFM by month and create dataframe
+leave_dfm_month <- leave_dict %>%
+  dfm_group(month, force = TRUE)
+freq_leave_month <- data.frame(list(
+    Year = (leave_dfm_month$month),
+    Frequency = leave_dfm_month))
+
+# Pre-process and create DFM for remain group
+remain_dict <- corpus_remain %>%
+  tokens(remove_punct = TRUE, remove_symbols = TRUE, 
+         remove_numbers = TRUE, remove_url = TRUE) %>%
+  tokens_remove(stopwords("en"), padding = TRUE) %>%
+  tokens_ngrams(n = 1:2) %>%
+  dfm() %>%
+  dfm_tfidf() %>%
+  dfm_trim(min_termfreq = 5) %>%
+  dfm_lookup(dictionary = data_dictionary_NRC)
+
+# Create a document-feature matrix and group it by day
+remain_dfm_day <- remain_dict %>%
+  dfm_group(date, force = TRUE)
+freq_remain <- data.frame(list(
+    Year = (remain_dfm_day$date),
+    Frequency = remain_dfm_day))
+# by month
+remain_dfm_month <- remain_dict %>%
+  dfm_group(month, force = TRUE)
+freq_remain_month <- data.frame(list(
+    Year = (remain_dfm_month$month),
+    Frequency = remain_dfm_month))
+
+# Plot graphs of daily sentiment score
+ggplot(freq_remain_month) + 
+  geom_line(aes(x = Year, y = Frequency.anger, color = "Anger", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.fear, color = "Fear", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.anticipation, color = "Anticipation", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.trust, color = "Trust", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.surprise, color = "Surprise", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.sadness, color = "Sadness", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.joy, color = "Joy", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.disgust, color = "Disgust", group=1), size = 0.2) + 
+  scale_x_discrete(breaks = c("2016-01", "2017-01", "2018-01", "2019-01", "2020-01", "2021-01"), 
+                    labels = c("2016", "2017", "2018", "2019", "2020", "2021")) + 
+  theme_light() +
+  labs(y = "Sentiment", color = "Legend") +
+  ggtitle("Remainer Sentiment")
+
+ggplot(freq_leave_month) + 
+  geom_line(aes(x = Year, y = Frequency.anger, color = "Anger", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.fear, color = "Fear", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.anticipation, color = "Anticipation", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.trust, color = "Trust", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.surprise, color = "Surprise", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.sadness, color = "Sadness", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.joy, color = "Joy", group=1), size = 0.2) + 
+  geom_line(aes(Year, y = Frequency.disgust, color = "Disgust", group=1), size = 0.2) + 
+  scale_x_discrete(breaks = c("2016-01", "2017-01", "2018-01", "2019-01", "2020-01", "2021-01"), 
+                    labels = c("2016", "2017", "2018", "2019", "2020", "2021")) + 
+  theme_light() +
+  labs(y = "Sentiment", color = "Legend") +
+  ggtitle("Leaver Sentiment")
+
+```
+
+Topic modelling.
+
+```{r}
+# Change year to numeric type
+corpus_leave$year <- as.numeric(corpus_leave$year)
+corpus_remain$year <- as.numeric(corpus_remain$year)
+
+# Pre-process and create DFM
+leave_dfm <- corpus_leave %>%
+  tokens(remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE, 
+         remove_url = TRUE, what = "word1") %>%
+  tokens_remove(c("brexit", "eu", "uk", stopwords("en"))) %>%
+  dfm()
+  dfm_trim(min_termfreq = 5)
+
+remain_dfm <- corpus_remain %>%
+  tokens(remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE, 
+         remove_url = TRUE, what = "word1") %>%
+  tokens_remove(c("brexit", "eu", "uk", stopwords("en"))) %>%
+  dfm() %>%
+  dfm_trim(min_termfreq = 5)
+
+# Convert to STM format
+leave_stm <- convert(leave_dfm, to = "stm")
+remain_stm <- convert(remain_dfm, to = "stm")
+
+# Run model
+leave_model <- stm(leave_stm$documents, leave_stm$vocab, K = 15, 
+                 data = leave_stm$meta, init.type = "Spectral")
+remain_model <- stm(remain_stm$documents, remain_stm$vocab, K = 15, 
+                 data = remain_stm$meta, init.type = "Spectral")
+
+data.frame(t(labelTopics(leave_model, n = 10)$prob))
+data.frame(t(labelTopics(remain_model, n = 10)$prob))
+
+# PLot summaries
+plot(leave_model, type = "summary", text.cex = 0.5)
+plot(remain_model, type = "summary", text.cex = 0.5)
+
+plot(remain_model, type = "perspectives", topics = c(5, 15))
+plot(remain_model, type = "hist", topics = sample(1:topic.count, size = 9))
+
+topic.count <- 15
+
+# Effect estimation over time 
+leave_model_labels <- labelTopics(leave_model, 1:topic.count)
+leave_stm$meta$datum <- as.numeric(leave_stm$meta$year)
+leave_stm_ee <- estimateEffect(1:topic.count ~ s(year), leave_model, meta = leave_stm$meta)
+
+# Effect estimation over time 
+remain_model_labels <- labelTopics(remain_model, 1:topic.count)
+remain_stm$meta$datum <- as.numeric(remain_stm$meta$year)
+remain_stm_ee <- estimateEffect(1:topic.count ~ s(year), remain_model, meta = remain_stm$meta)
+
+# Plot 
+par(mfrow=c(3,3))
+for (i in seq_along(sample(1:9, size = 9)))
+{
+  plot(leave_stm_ee, "year", method = "continuous", topics = i, main = paste0(leave_model_labels$prob[i,1:3], collapse = ", "), printlegend = F)
+}
+```
+
+Latent semantic scaling for leavers.
+
+```{r}
+corpus_leave <- corpus(leaver_tl)
+corp_sent_leave <- corpus_reshape(corpus_leave, to =  "sentences")
+toks_sent_leave <- corp_sent_leave %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, 
+           remove_numbers = TRUE, remove_url = TRUE) %>% 
+    tokens_remove(stopwords("en", source = "marimo")) %>%
+    tokens_remove(c("*-time", "*-timeUpdated", "GMT", "BST", "*.com"))  
+
+# create a document feature matrix from the tokens object
+dfmat_sent_leave <- toks_sent_leave %>% 
+    dfm() %>% 
+    dfm_remove(pattern = "") %>% 
+    dfm_trim(min_termfreq = 5)
+
+seed <- as.seedwords(data_dictionary_sentiment)
+# identify context words 
+eco_leave <- char_context(toks_sent_leave, pattern = "nhs*", p = 0.05)
+
+# run LSS model
+tmod_lss_leave <- textmodel_lss(dfmat_sent_leave, seeds = seed,
+                          terms = eco_leave, k = 300, cache = TRUE)
+
+textplot_terms(tmod_lss_leave, data_dictionary_LSD2015["negative"])
+
+dfmat_doc_leave <- dfm_group(dfmat_sent_leave)
+dat <- docvars(dfmat_doc_leave)
+dat <- dat %>%
+  mutate(date = as.Date(created_at.x, format = "%d.%m.%Y"))
+dat$fit <- predict(tmod_lss_leave, newdata = dfmat_doc_leave)
+dat_smooth_leave <- smooth_lss(dat, engine = "locfit")
+
+plot(dat$date, dat$fit, col = rgb(0, 0, 0, 0.00), pch = 1, ylim = c(-0.5, 0.5),
+     xlab = "Time", ylab = "Brexit Polarity", main = "Polarity With Respect To Brexit")
+lines(dat_smooth_leave$date, dat_smooth_leave$fit, type = "l")
+lines(dat_smooth_leave$date, dat_smooth_leave$fit + dat_smooth_leave$se.fit * 1.96, type = "l", lty = 3)
+lines(dat_smooth_leave$date, dat_smooth_leave$fit - dat_smooth_leave$se.fit * 1.96, type = "l", lty = 3)
+abline(h = 0, lty = c(1, 2))
+
+par(new=TRUE)
+plot(dat_remain$date, dat_remain$fit, col = rgb(0, 0, 0, 0.00), pch = 1, ylim = c(-0.5, 0.5),
+     xlab = "Time", ylab = "")
+lines(dat_smooth$date, dat_smooth$fit, type = "l")
+lines(dat_smooth$date, dat_smooth$fit + dat_smooth$se.fit * 1.96, type = "l", lty = 3)
+lines(dat_smooth$date, dat_smooth$fit - dat_smooth$se.fit * 1.96, type = "l", lty = 3)
+abline(h = 0, lty = c(1, 2))
+
+df_leave_pol <- data.frame(x = dat_smooth_leave$date, y = dat_smooth_leave$fit)
+df_leave_se <- data.frame(x = dat_smooth_leave$date, y = dat_smooth_leave$fit + dat_smooth_leave$se.fit * 1.96)
+df_leave_se1 <- data.frame(x = dat_smooth_leave$date, y = dat_smooth_leave$fit - dat_smooth_leave$se.fit * 1.96)
+df_remain_pol <- data.frame(x = dat_smooth$date, y = dat_smooth$fit)
+df_remain_se <- data.frame(x = dat_smooth$date, y = dat_smooth$fit + dat_smooth$se.fit * 1.96)
+df_remain_se1 <- data.frame(x = dat_smooth$date, y = dat_smooth$fit - dat_smooth$se.fit * 1.96)
+
+ggplot() + 
+geom_line(data=df_leave_pol, aes(x, y, color = "Leave")) + 
+  geom_line(data=df_leave_se, aes(x, y, color = "Leave"),linetype = "dotted") + 
+  geom_line(data=df_leave_se1, aes(x, y, color = "Leave"), linetype = "dotted") + 
+geom_line(data=df_remain_pol, aes(x, y, color = "Remain")) +
+  geom_line(data=df_remain_se, aes(x, y, color = "Remain"), linetype = "dotted") + 
+  geom_line(data=df_remain_se1, aes(x, y, color = "Remain"), linetype = "dotted") + 
+  theme_light() +
+  ggtitle("Polarity With Respect to the Economy") +
+  labs(x = "Year", y = "Polarity", color = "Legend") +
+  scale_color_manual(values = c("#923130", "#0077dc"))
+```
+
+Latent semantic scaling for Remainers.
+
+```{r}
+#corpus_remain <- corpus(remainer_tl)
+corp_sent_remain <- corpus_reshape(corpus_remain, to =  "sentences")
+toks_sent_remain <- corp_sent_remain %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, 
+           remove_numbers = TRUE, remove_url = TRUE) %>% 
+    tokens_remove(stopwords("en", source = "marimo")) %>%
+    tokens_remove(c("*-time", "*-timeUpdated", "GMT", "BST", "*.com"))  
+
+# create a document feature matrix from the tokens object
+dfmat_sent_remain <- toks_sent_remain %>% 
+    dfm() %>% 
+    dfm_remove(pattern = "") %>% 
+    dfm_trim(min_termfreq = 5)
+
+seed <- as.seedwords(data_dictionary_sentiment)
+# identify context words 
+eco_remain <- char_context(toks_sent_remain, pattern = "nhs*", p = 0.05)
+
+# run LSS model
+tmod_lss_remain <- textmodel_lss(dfmat_sent_remain, seeds = seed,
+                          terms = eco_remain, k = 300, cache = TRUE)
+head(coef(tmod_lss), 20)
+tail(coef(tmod_lss), 20)
+
+textplot_terms(tmod_lss_remain, data_dictionary_LSD2015["negative"])
+
+# Plot the polarity using LSS
+dfmat_doc_remain <- dfm_group(dfmat_sent_remain)
+dat_remain <- docvars(dfmat_sent_remain)
+dat_remain$fit <- predict(tmod_lss_remain, newdata = dfmat_sent_remain)
+dat_smooth <- smooth_lss(dat_remain, engine = "locfit")
+```
