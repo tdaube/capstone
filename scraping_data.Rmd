@@ -1,0 +1,114 @@
+---
+title: "Data Scraping"
+output: html_document
+---
+
+```{r}
+ Load relevant packages
+library("academictwitteR")
+library("tidytext")
+library("stringr")
+
+# Set bearer token to avoid hard coding into script
+set_bearer()
+
+# Set tweet query for predefined timeframe
+brexit_2016 <- get_all_tweets(
+  query = "#Remoaner OR #TakeControl OR #VoteLeave OR #IVotedLeave OR 
+  #LeaveEU OR #No2EU OR 🇬🇧 OR #Brextremist OR #StrongerIn OR #RejoinEU
+  OR #VoteRemain OR #FBPE OR #InTogether OR 🇪🇺 place_country:GB lang:en -is:retweet",
+  start_tweets = "2016-02-22T00:00:00Z",
+  end_tweets = "2021-03-01T00:00:00Z",
+  is_retweet = FALSE,
+  country = "GB", 
+  data_path = "users/",
+  bind_tweets = FALSE,
+  export_query = TRUE, 
+  page_n = 500, 
+  n = Inf)
+
+# In case of interruption
+#resume_collection(data_path = "users_2018/")
+
+# Bind tweets into a dataframe object
+tweets <- bind_tweets(data_path = "users/")
+users <- bind_tweets(data_path = "users/", user = TRUE)
+
+# Retain only relevant columns to save memory
+tweets <- select(tweets, created_at, lang, text, author_id, conversation_id)
+users <- select(users, created_at, name, username, 
+                description, location, verified, id)
+
+# Save as CSV file 
+write.csv(tweets, 'tweets.csv')
+write.csv(users, 'users.csv')
+
+# Read CSV file in
+users <- read.csv('users.csv')
+
+# Keep only unique set of users
+unique_users <- users[!duplicated(users$username), ]
+
+# Rename so id columns are same
+tweets <- tweets %>%
+  rename(id = author_id)
+
+# Combine columns to drop irrelevant ones & remove duplicates
+total<- unique(merge(tweets, unique_users, by = "id"))
+```
+
+Generic query for Brexit-related discussion in the a user's timeline. 
+
+```{r}
+# Convert dataframe into list
+remainer_list <- as.vector(unique_remainer$username)
+leaver_list <- as.vector(unique_leaver$username)
+
+generic_terms <- c("brexit, britaininout, euref, brexitinout, eureferendum, 
+                   no2eu, yes2eu, betteroffout, betteroffin, voteout, votein,
+                   eureform, ukineu, bremain, eupoll, ukreferendum, ukandeu, 
+                   referendum, europe, ukref, strongerin, leadnotleave, voteremain, 
+                   britainout, leaveeu, voteleave, beleave, greenerin, projectfear, 
+                   projectfact, remaineu, brexitfears, takecontrol, bregret, 
+                   brexitvote, article50, takecontrol, independenceday, peoplesvote, 
+                   revokearticle50, nodeal, rejoineu, indyref2, brexitshambles")
+
+# Split to enable scraping with API limit reached
+seq_remain <- split(remainer_list, ceiling(seq_along(remainer_list)/20))
+
+# Get all timeline tweets using generic Brexit query terms for remainers
+
+for (remainer in seq_remain) {
+    timeline_remainer <- get_all_tweets(
+        query = generic_terms,
+        users = remainer,
+        start_tweets = "2016-02-22T00:00:00Z",
+        end_tweets = "2021-03-01T00:00:00Z",
+        is_retweet = FALSE,
+        country = "GB", 
+        data_path = "timelines/",
+        bind_tweets = FALSE,
+        page_n = 500, 
+        n = Inf)
+}
+
+# Bind tweets into a dataframe object
+remain_timeline <- bind_tweets(data_path = "timelines_remainer/")
+users_timeline <- bind_tweets(data_path = "timelines_remainer/", user = TRUE)
+
+# Retain only relevant columns to save memory
+remainer_timeline <- select(remain_timeline, created_at, lang, text, author_id, conversation_id)
+user_timeline <- select(users_timeline, created_at, name, username, description, location, 
+                           verified, id)
+
+# Rename so id columns are same
+remainer_timeline <- remainer_16_timeline %>%
+  rename(id = author_id)
+
+# Combine columns to drop irrelevant ones
+remainer_timeline <- unique(merge(remainer_timeline, user_timeline, by = "id"))
+
+# Save as CSV file 
+write.csv(remainer_timeline, 'remainer_timeline.csv')
+```
+
