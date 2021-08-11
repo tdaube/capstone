@@ -1,0 +1,53 @@
+---
+title: "Capstone Query Selection"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Look through Brexit query to create rule-based classification and list of most frequent hashtags. 
+
+```{r}
+library("academictwitteR")
+
+# API query
+brexit <- get_all_tweets(
+  query = "brexit place_country:GB lang:en -is:retweet",
+  start_tweets = "2016-02-22T00:00:00Z",
+  end_tweets = "2021-03-1T00:00:00Z",
+  is_retweet = FALSE,
+  country = "GB", 
+  data_path = "identifying/",
+  bind_tweets = FALSE,
+  export_query = TRUE, 
+  page_n = 500, 
+  n = Inf)
+
+# Bind terms into file
+brexit_terms <- bind_tweets(data_path = "identifying/")
+brex <- brexit_terms$text
+
+# Extracting all hashtags
+hashtag_pat <- "#[a-zA-Z0-9_-ー\\.]+"
+hashtag <- str_extract_all(brex, hashtag_pat)
+hashtag_word <- unlist(hashtag)
+hashtag_word <- tolower(hashtag_word)
+hashtag_word <- gsub("[[:punct:]ー]", "", hashtag_word)
+hashtag_word <- hashtag_word[!str_detect(hashtag_word, "brexit")]
+hashtag_count <- table(hashtag_word)
+top_20_freqs <- sort(hashtag_count, decreasing = TRUE)[1:20]
+top_20_freqs
+# Create frequency dataframe of hashtags
+as.data.frame(hashtag_word) %>%
+  count(hashtag_word, sort = TRUE) %>%
+  mutate(hashtag_word = reorder(hashtag_word, n)) %>%
+  top_n(30) %>%
+  ggplot(aes(x = hashtag_word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "Count",
+       y = "Hashtag",
+       title = "Top 30 Popular Hashtags surrounding Brexit")
+```
